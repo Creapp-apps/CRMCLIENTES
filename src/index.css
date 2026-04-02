@@ -24,6 +24,29 @@
   --transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
+body.light-theme {
+  --bg-color: #f1f5f9;
+  --panel-bg: rgba(255, 255, 255, 0.85);
+  --panel-bg-hover: rgba(255, 255, 255, 1);
+  --text-main: #0f172a;
+  --text-muted: #475569;
+  --glass-border: rgba(0, 0, 0, 0.08);
+  --glass-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1);
+}
+body.light-theme * {
+  color: var(--text-main);
+}
+body.light-theme p, body.light-theme span.text-muted {
+  color: var(--text-muted) !important;
+}
+body.light-theme .text-accent {
+  color: var(--accent) !important;
+}
+body.light-theme .glass-panel {
+  background: var(--panel-bg);
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+}
+
 * {
   box-sizing: border-box;
   margin: 0;

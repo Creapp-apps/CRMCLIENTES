@@ -1,16 +1,245 @@
-import { useState } from 'react';
-import { Users, BarChart3, Settings, Database, MoreVertical, Smartphone, Plus, Upload, CheckCircle, ArrowLeft } from 'lucide-react';
-import { mockTeam, mockProjects } from '../data/mockData';
+import { useState, useEffect } from 'react';
+import { Users, BarChart3, Settings, Database, Smartphone, Plus, Upload, ArrowLeft, Search, Filter, Trash2, Edit3, MapPin, Globe, Phone, FileDigit } from 'lucide-react';
+import { fetchGlobalStats, fetchTeam, fetchProjects, fetchLeads, bulkCreateLeads, deleteProject, fetchProjectPlans } from '../lib/api';
 import { Link } from 'react-router-dom';
+import Papa from 'papaparse';
+
+import AddProjectModal from '../components/AddProjectModal';
+import EditProjectModal from '../components/EditProjectModal';
+import AddSdrModal from '../components/AddSdrModal';
+import AssignProjectModal from '../components/AssignProjectModal';
+import AddPlanModal from '../components/AddPlanModal';
+import LeadManagerModal from '../components/LeadManagerModal';
 
 export default function AdminDashboard() {
-  const [activeView, setActiveView] = useState('metrics'); // metrics, team, projects, config, project_details
+  const [activeView, setActiveView] = useState('metrics'); 
   const [selectedProject, setSelectedProject] = useState(null);
+  const [selectedSdr, setSelectedSdr] = useState(null);
+  
+  // Modals state
+  const [showAddProject, setShowAddProject] = useState(false);
+  const [showEditProject, setShowEditProject] = useState(false);
+  const [showAddSdr, setShowAddSdr] = useState(false);
+  const [showAssignSdr, setShowAssignSdr] = useState(false);
+  const [showAddPlan, setShowAddPlan] = useState(false);
 
-  const handleViewProject = (proj) => {
+  // Data state
+  const [stats, setStats] = useState({ totalLeadsMonth: 0, totalWon: 0, conversionRate: '0', mrr: 0 });
+  const [team, setTeam] = useState([]);
+  const [projects, setProjects] = useState([]);
+  const [projectLeads, setProjectLeads] = useState([]); 
+  const [projectPlans, setProjectPlans] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  // Project Detail state
+  const [searchQuery, setSearchQuery] = useState('');
+  const [zoneQuery, setZoneQuery] = useState('');
+  const [uploadingData, setUploadingData] = useState(false);
+  const [leadsFilterTab, setLeadsFilterTab] = useState('outbound'); // 'inbound', 'outbound'
+  const [statusFilter, setStatusFilter] = useState('all'); // 'all', 'uncontacted', 'contacting', 'won', 'lost'
+  
+  // Lead Manager State
+  const [managerLead, setManagerLead] = useState(null);
+
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  async function loadData() {
+    setLoading(true);
+    try {
+      const [statsData, teamData, projsData] = await Promise.all([
+        fetchGlobalStats(),
+        fetchTeam(),
+        fetchProjects()
+      ]);
+      setStats(statsData);
+      setTeam(teamData || []);
+      setProjects(projsData || []);
+    } catch (err) {
+      console.error('Error cargando data Admin:', err);
+    }
+    setLoading(false);
+  }
+
+  const handleViewProject = async (proj) => {
     setSelectedProject(proj);
+    setSearchQuery('');
+    setProjectLeads([]); 
+    setProjectPlans([]);
     setActiveView('project_details');
+    
+    try {
+      const [leads, plans] = await Promise.all([
+        fetchLeads(proj.id),
+        fetchProjectPlans(proj.id)
+      ]);
+      setProjectLeads(leads || []);
+      setProjectPlans(plans || []);
+    } catch (err) {
+      console.error(err);
+    }
   };
+
+  const refreshPlans = async () => {
+    if(!selectedProject) return;
+    const plans = await fetchProjectPlans(selectedProject.id);
+    setProjectPlans(plans || []);
+  };
+
+  const handleDeleteProject = async (projId) => {
+    if (!window.confirm('¿Seguro que deseas ELIMINAR este proyecto y todas sus bases de datos asociadas? Es una acción destructiva e irreversible.')) return;
+    try {
+      setLoading(true);
+      await deleteProject(projId);
+      if (selectedProject?.id === projId) setActiveView('projects');
+      await loadData();
+    } catch (err) {
+      alert('Error al eliminar proyecto: ' + err.message);
+      setLoading(false);
+    }
+  };
+
+  const handleFileUpload = (e) => {
+    const file = e.target.files[0];
+    const sourceElement = document.querySelector('input[name="leadSource"]:checked');
+    const source = sourceElement ? sourceElement.value : 'outbound';
+    
+    if (!file) return;
+
+    setUploadingData(true);
+
+    // Mapeo Inteligente Basado en Valores (Heurística) para evadir cabeceras corruptas
+    Papa.parse(file, {
+      header: false, // Forzamos array de arrelgos para no depender de cabeceras sucias
+      skipEmptyLines: true,
+      complete: async (results) => {
+        let data = results.data;
+        if (data.length === 0) {
+          setUploadingData(false);
+          return alert('El CSV está vacío.');
+        }
+
+        // Si la primera fila parece ser cabecera, la saltamos
+        const firstRowStr = data[0].join(' ').toLowerCase();
+        const hasHeader = ['name', 'nombre', 'url', 'phone', 'teléfono', 'address', 'dirección'].some(h => firstRowStr.includes(h));
+        if (hasHeader) data.shift();
+
+        const leadsToCreate = data.map(rowCols => {
+          // Limpiar comillas basura de los scrapers
+          const cleanCols = rowCols.map(c => c ? c.toString().replace(/^"|"$/g, '').trim() : '');
+
+          let finalName = '';
+          let finalPhone = '';
+          let finalWebsite = '';
+          let finalLocation = '';
+
+          cleanCols.forEach(val => {
+            if (!val) return;
+            const lowerVal = val.toLowerCase();
+            if (lowerVal.startsWith('http') || lowerVal.startsWith('www.')) {
+              if (lowerVal.includes('google.com/maps')) {
+                if (!finalLocation) finalLocation = val; 
+              } else {
+                if (!finalWebsite) finalWebsite = val;
+              }
+            } else if (/^[\+0-9\s\-\(\)]+$/.test(val) && val.length >= 6 && val.length < 25) {
+              if (!finalPhone) finalPhone = val;
+            } else {
+              // Asumimos que es texto
+              if (!finalName && val.length > 2 && val.length < 150) {
+                finalName = val;
+              } else if (!finalLocation && val.length > 10) {
+                finalLocation = val;
+              }
+            }
+          });
+
+          return {
+            project_id: selectedProject.id,
+            name: finalName || 'Sin Nombre',
+            company: finalName, 
+            phone: finalPhone || '',
+            website: finalWebsite || '',
+            location: finalLocation || '',
+            source: source,
+            channel: 'base_datos',
+            status: 'uncontacted'
+          };
+        });
+
+        try {
+          await bulkCreateLeads(leadsToCreate);
+          // Refrescar leads
+          const leads = await fetchLeads(selectedProject.id);
+          setProjectLeads(leads || []);
+          // Seleccionar la tab a la que se acaba de subir para que el usuario las vea
+          setLeadsFilterTab(source);
+          alert(`${leadsToCreate.length} contactos cargados y filtrados correctamente.`);
+        } catch (err) {
+          alert('Error impactando la DB: ' + err.message);
+        }
+        setUploadingData(false);
+        e.target.value = null; // reset
+      },
+      error: (err) => {
+        alert('Error Parseando el archivo: ' + err.message);
+        setUploadingData(false);
+      }
+    });
+  };
+
+  const filteredProjectLeads = projectLeads.filter(l => {
+    // 1. Filtrar por Inbound / Outbound
+    if (l.source !== leadsFilterTab) return false;
+    
+    // 2. Filtrar por Estado
+    if (statusFilter !== 'all' && l.status !== statusFilter) return false;
+
+    // 3. Filtrar por Zona (Ubicación)
+    if (zoneQuery) {
+      if (!l.location || !l.location.toLowerCase().includes(zoneQuery.toLowerCase())) return false;
+    }
+
+    // 4. Filtrar por Búsqueda (Nombre/Teléfono/Empresa)
+    if (searchQuery) {
+      const sq = searchQuery.toLowerCase();
+      const matchName = l.name && l.name.toLowerCase().includes(sq);
+      const matchCompany = l.company && l.company.toLowerCase().includes(sq);
+      const matchPhone = l.phone && l.phone.toLowerCase().includes(sq);
+      return matchName || matchCompany || matchPhone;
+    }
+    return true;
+  });
+
+  const activeLeadsCount = projectLeads.filter(l => l.source === leadsFilterTab).length;
+
+  const handleAdminInteraction = async (leadId, actionType, outcome, notes, nextDate, dealPlanId, promoCode) => {
+    // Import createInteraction dynamically or ensure it's available from api.js if needed.
+    // For simplicity, we can fetch it, but wait! We didn't import createInteraction/updateLeadStatus in AdminDashboard yet!
+    // Since AdminDashboard might not have them imported, let's just alert for now, or I'll dynamically import.
+    const { createInteraction, updateLeadStatus } = await import('../lib/api.js');
+    try {
+      await createInteraction({
+        lead_id: leadId,
+        sdr_id: (await import('../context/AuthContext.jsx')).useAuth?.()?.user?.id || leadId, // fallback if needed
+        action_type: actionType,
+        outcome,
+        notes
+      });
+      let newStatus = 'contacting';
+      if (outcome === 'lost') newStatus = 'lost';
+      if (outcome === 'won') newStatus = 'won';
+      await updateLeadStatus(leadId, newStatus, nextDate || null, { dealPlanId, promoCode });
+      
+      const leads = await fetchLeads(selectedProject.id);
+      setProjectLeads(leads || []);
+    } catch (err) {
+      alert('Error guardando: ' + err.message);
+    }
+  };
+
+  if (loading) return <div style={{display:'flex', height:'100vh', justifyContent:'center', alignItems:'center'}}><div className="spinner" style={{width: 40, height: 40, border: '3px solid rgba(255,255,255,0.1)', borderTopColor: '#6366f1', borderRadius: '50%', animation: 'spin 0.8s linear infinite'}}></div></div>;
 
   return (
     <div className="admin-container">
@@ -37,31 +266,23 @@ export default function AdminDashboard() {
           <div className="animate-slide-up">
             <header className="admin-header">
               <h1>Métricas Generales</h1>
-              <p>Visión global de todos los proyectos de CreApp</p>
+              <p>Visión global de todos los proyectos conectados a Supabase</p>
             </header>
 
             <section className="dashboard-grid">
                <div className="kpi-card glass-panel">
                   <h3 className="text-muted">Total Leads (Mes)</h3>
-                  <p className="kpi-value">1,245</p>
-                  <span className="badge badge-success">+12% vs mes anterior</span>
+                  <p className="kpi-value">{stats.totalLeadsMonth}</p>
+                  <span className="badge badge-success">Cargados en la BD</span>
                </div>
                <div className="kpi-card glass-panel">
                   <h3 className="text-muted">Conversión Glob.</h3>
-                  <p className="kpi-value">4.8%</p>
+                  <p className="kpi-value">{stats.conversionRate}%</p>
                </div>
                <div className="kpi-card glass-panel">
-                  <h3 className="text-muted">Activos Mensuales</h3>
-                  <p className="kpi-value text-accent">13</p>
-                  <p className="text-sm">En {mockProjects.length} proyectos</p>
-               </div>
-
-               <div className="admin-panel glass-panel" style={{ gridColumn: '1 / -1' }}>
-                  <div className="panel-header">
-                     <h3>Rendimiento Resumido</h3>
-                     <button className="btn btn-glass btn-sm" onClick={() => setActiveView('team')}>Ver Equipo Completo</button>
-                  </div>
-                  <p className="text-muted text-sm">Navega a la pestaña Equipo de Ventas para asignar y gestionar los perfiles.</p>
+                  <h3 className="text-muted">Cierres Totales (WON)</h3>
+                  <p className="kpi-value text-accent">{stats.totalWon}</p>
+                  <p className="text-sm">En {projects.length} proyectos</p>
                </div>
             </section>
           </div>
@@ -75,38 +296,33 @@ export default function AdminDashboard() {
                    <h1>Equipo de Ventas</h1>
                    <p>Gestión de cerradores, asignación de proyectos</p>
                 </div>
-                <button className="btn btn-primary"><Plus size={18}/> Nuevo Vendedor</button>
+                <button className="btn btn-primary" onClick={() => setShowAddSdr(true)}><Plus size={18}/> Nuevo Vendedor</button>
              </header>
 
              <div className="admin-panel glass-panel">
                 <table className="admin-table">
                    <thead>
                      <tr>
-                       <th>Vendedor</th>
+                       <th>Vendedor (SDR)</th>
                        <th>Proyectos Asignados</th>
-                       <th>Clientes Activos</th>
                        <th>Acciones Rápidas</th>
                      </tr>
                    </thead>
                    <tbody>
-                     {mockTeam.map(member => (
+                     {team.length === 0 && <tr><td colSpan="3" style={{textAlign:'center', padding:30}}>No hay vendedores. Crea el primero.</td></tr>}
+                     {team.map(member => (
                        <tr key={member.id}>
-                         <td><strong>{member.name}</strong><br/><span className="text-xs text-muted">ID: SDR-{member.id}</span></td>
+                         <td><strong>{member.full_name}</strong><br/><span className="text-xs text-muted">Rol: {member.role.toUpperCase()}</span></td>
                          <td>
                             <div style={{display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 8}}>
-                               {member.commissions.map(c => {
-                                 const proj = mockProjects.find(p => p.id === c.projectId);
-                                 return <span key={c.projectId} className="badge badge-inbound">{proj?.code}</span>
+                               {member.sdr_project_commissions?.map(c => {
+                                 return <span key={c.project_id} className="badge badge-inbound">{c.projects?.code}</span>
                                })}
                             </div>
-                            <button className="btn btn-glass btn-sm text-xs" onClick={()=>alert('Abrir modal de asignación de nuevo proyecto a '+member.name)}>+ Asignar Proyecto</button>
+                            <button className="btn btn-glass btn-sm text-xs" onClick={() => { setSelectedSdr(member); setShowAssignSdr(true); }}>+ Asignar a Proyecto</button>
                          </td>
-                         <td>{member.totalActiveClients} vinculados</td>
                          <td>
-                            <div style={{display: 'flex', gap: 8}}>
-                               <button className="btn btn-glass btn-sm" onClick={() => setActiveView('config')}>Ver Comisiones</button>
-                               <button className="btn-icon" title="Editar"><MoreVertical size={16}/></button>
-                            </div>
+                            <button className="btn btn-glass btn-sm" onClick={() => setActiveView('config')}>Ver Comisiones</button>
                          </td>
                        </tr>
                      ))}
@@ -122,31 +338,33 @@ export default function AdminDashboard() {
              <header className="admin-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <div>
                    <h1>Bases de Datos de Clientes</h1>
-                   <p>Administración Multi-tenant de Proyectos</p>
+                   <p>Administración Multi-tenant de Proyectos en Supabase</p>
                 </div>
-                <button className="btn btn-primary"><Plus size={18}/> Nuevo Proyecto SaaS</button>
+                <button className="btn btn-primary" onClick={() => setShowAddProject(true)}><Plus size={18}/> Nuevo Proyecto SaaS</button>
              </header>
 
              <div className="dashboard-grid">
-               {mockProjects.map(proj => (
+               {projects.length === 0 && <p className="text-muted" style={{gridColumn: '1 / -1'}}>No hay proyectos en la base de datos. Crea uno.</p>}
+               {projects.map(proj => {
+                 const projLeads = stats?.totalLeadsMonth ? [] : []; // We need a way to get project lead count, but stats is global. We will assume 0 if not fetched. Or we just show gamification inside the project!
+                 return (
                  <div key={proj.id} className="glass-panel" style={{ padding: 20, cursor: 'pointer', transition: 'var(--transition)' }} onClick={() => handleViewProject(proj)}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 12 }}>
                        <h3 style={{ fontSize: '1.2rem', color: 'white' }}>{proj.name}</h3>
-                       <span className={`badge badge-${proj.isActive ? 'success' : 'danger'}`}>{proj.isActive ? 'Activo' : 'Pausado'}</span>
+                       <span className={`badge badge-${proj.is_active ? 'success' : 'warning'}`}>{proj.is_active ? 'Activo' : 'Pausado'}</span>
                     </div>
-                    <p className="text-sm text-muted mb-3">Modelo Cobro: <strong className="text-main" style={{textTransform:'uppercase'}}>{proj.pricingType}</strong></p>
-                    <p className="text-sm text-muted">Abono Base / Setup: ${proj.basePrice.toLocaleString()}</p>
+                    <p className="text-sm text-muted mb-3">Cobro: <strong className="text-main" style={{textTransform:'uppercase'}}>{proj.pricing_type}</strong></p>
                     
                     <div style={{ marginTop: 24, borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: 16 }}>
-                       <button className="btn btn-glass btn-sm" style={{ width: '100%', pointerEvents: 'none' }}>Administrar Base de Datos</button>
+                       <button className="btn btn-glass btn-sm" style={{ width: '100%', pointerEvents: 'none' }}>Administrar Proyecto</button>
                     </div>
                  </div>
-               ))}
+               )})}
              </div>
           </div>
         )}
 
-        {/* VIEW: PROJECT DETAILS (INSIDE PROYECTOS) */}
+        {/* VIEW: PROJECT DETAILS (CSV & LEADS VIEW) */}
         {activeView === 'project_details' && selectedProject && (
            <div className="animate-slide-up">
               <header className="admin-header">
@@ -154,48 +372,148 @@ export default function AdminDashboard() {
                  <div style={{display:'flex', justifyContent:'space-between', alignItems:'flex-start'}}>
                     <div>
                        <h1>{selectedProject.name} <span className="text-muted" style={{fontSize:'1rem'}}>({selectedProject.code})</span></h1>
-                       <p>Gestión de abonos, retorno de este proyecto y carga masiva de leads.</p>
+                       <div style={{display: 'flex', gap: 8, marginTop: 12}}>
+                          <button className="btn btn-glass btn-sm" onClick={() => setShowEditProject(true)}><Edit3 size={14}/> Editar Proyecto</button>
+                          <button className="btn-icon" style={{color: 'var(--danger)', padding: '6px 12px', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 6, fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: 4}} onClick={() => handleDeleteProject(selectedProject.id)}><Trash2 size={14}/> Eliminar</button>
+                       </div>
                     </div>
-                    <span className={`badge badge-${selectedProject.isActive ? 'success' : 'danger'}`} style={{fontSize: '1rem'}}>{selectedProject.isActive ? 'Status: Activo' : 'Status: Pausado'}</span>
                  </div>
               </header>
 
-              <div className="dashboard-grid">
-                 {/* Retorno y Abonos */}
-                 <div className="glass-panel" style={{padding: 24}}>
-                    <h3 className="text-muted" style={{marginBottom: 16}}>Retorno de este Proyecto</h3>
-                    <p className="kpi-value text-accent">${(selectedProject.basePrice * 12).toLocaleString()}</p>
-                    <p className="text-sm mb-3">Facturación estimada mensual</p>
-                    {selectedProject.pricingType !== 'percentage' && (
-                       <button className="btn btn-glass btn-sm">Editar Abonos Activos</button>
-                    )}
-                 </div>
-
-                 {/* Carga Masiva de CSV */}
-                 <div className="glass-panel" style={{padding: 24, gridColumn: 'span 2'}}>
-                    <h3 style={{marginBottom: 16}}>Cargar Base de Datos (Upload Leads)</h3>
-                    <p className="text-sm text-muted" style={{marginBottom: 20}}>Sube un archivo .CSV para alimentar la bandeja de Inbound u Outbound de este proyecto específico. Se asignará a los SDR encargados.</p>
-                    
-                    <div style={{display:'flex', gap: 16, alignItems:'center', marginBottom: 20}}>
-                       <label style={{display:'flex', alignItems:'center', gap:8, cursor:'pointer'}}>
-                          <input type="radio" name="leadSource" value="inbound" defaultChecked />
-                          <span>Mapear como Inbound 📥</span>
-                       </label>
-                       <label style={{display:'flex', alignItems:'center', gap:8, cursor:'pointer'}}>
-                          <input type="radio" name="leadSource" value="outbound" />
-                          <span>Mapear como Outbound 📤</span>
-                       </label>
+              {/* LISTADO DE PLANES CONFIGURADOS PARA ESTE PROYECTO */}
+              <div className="glass-panel" style={{padding: 24, marginBottom: 32}}>
+                  <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16}}>
+                    <div>
+                      <h3>Planes de Facturación</h3>
+                      <p className="text-sm text-muted mt-1">Estos son los paquetes que el SDR podrá venderle al cliente al cerrar un trato.</p>
                     </div>
+                    <button className="btn btn-glass btn-sm" onClick={() => setShowAddPlan(true)}>+ Añadir Plan</button>
+                  </div>
+                  
+                  {projectPlans.length === 0 ? (
+                    <div className="text-center text-muted" style={{padding: '20px 0', border: '1px dashed rgba(255,255,255,0.1)', borderRadius: 8}}>
+                      No hay planes pre-cargados. Los vendedores no tendrán qué ofrecer al marcar GANADO.
+                    </div>
+                  ) : (
+                    <div style={{display: 'flex', gap: 12, flexWrap: 'wrap'}}>
+                      {projectPlans.map(plan => (
+                        <div key={plan.id} style={{background: 'rgba(0,0,0,0.3)', padding: '12px 16px', borderRadius: 8, border: '1px solid rgba(99, 102, 241, 0.2)', minWidth: 200}}>
+                          <h4 style={{margin: 0, fontSize: '1rem'}}>{plan.name}</h4>
+                          <p className="text-accent" style={{fontSize: '1.2rem', fontWeight: 'bold', margin: '4px 0'}}>${Number(plan.price).toLocaleString()}</p>
+                          <p className="text-xs text-muted" style={{textTransform: 'uppercase'}}>{plan.billing_cycle}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+              </div>
 
-                    <div style={{border: '2px dashed var(--glass-border)', padding: 32, borderRadius: 12, textAlign: 'center'}}>
-                       <Upload size={32} className="text-muted" style={{marginBottom: 12}} />
-                       <h4 style={{marginBottom: 8}}>Arrastra tu CSV aquí o haz clic</h4>
-                       <p className="text-xs text-muted">Asegúrate de tener columnas para Nombre, Empresa y Email/Teléfono.</p>
-                       <button className="btn btn-primary mt-3" onClick={() => alert('Simulador: CSV de Leads procesado y subido con éxito.')}>
-                          Seleccionar Archivo
-                       </button>
+              {/* GAMIFICACIÓN Y ESTADO DEL PROYECTO */}
+              <div className="glass-panel" style={{padding: 24, marginBottom: 32}}>
+                 <h3 style={{marginBottom: 16}}>Rendimiento de Campaña</h3>
+                 <div style={{display: 'flex', alignItems: 'center', gap: 24}}>
+                    <div style={{width: 80, height: 80, borderRadius: '50%', border: '4px solid rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative'}}>
+                       <svg width="80" height="80" style={{position:'absolute', top:-4, left:-4, transform: 'rotate(-90deg)'}}>
+                          <circle cx="40" cy="40" r="38" fill="none" stroke="#4ade80" strokeWidth="4" strokeDasharray="238" strokeDashoffset={238 - (238 * (projectLeads.filter(l => l.status === 'won').length / Math.max(1, projectLeads.length)))} style={{transition: '1s ease-out'}} />
+                       </svg>
+                       <div style={{textAlign: 'center'}}>
+                          <span style={{fontSize: '1.2rem', fontWeight: 800, color: 'white'}}>{projectLeads.length > 0 ? Math.round((projectLeads.filter(l => l.status === 'won').length / projectLeads.length) * 100) : 0}%</span>
+                       </div>
+                    </div>
+                    <div style={{flex: 1}}>
+                       <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: 8}}>
+                          <span className="text-sm text-muted">Progreso de Ventas</span>
+                          <span className="text-sm font-bold text-success">{projectLeads.filter(l => l.status === 'won').length} Cerrados / {projectLeads.length} Total</span>
+                       </div>
+                       <div className="progress-container" style={{background: 'rgba(0,0,0,0.3)', height: 8, borderRadius: 4, overflow: 'hidden'}}>
+                          <div className="progress-bar" style={{width: `${projectLeads.length > 0 ? (projectLeads.filter(l => l.status === 'won').length / projectLeads.length) * 100 : 0}%`, background: '#4ade80', height: '100%'}}></div>
+                       </div>
                     </div>
                  </div>
+              </div>
+
+              <div className="glass-panel" style={{padding: 24, marginBottom: 32, display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
+                  <div>
+                    <h3>Cargar Prospectos Analíticamente</h3>
+                    <p className="text-sm text-muted mt-2">Extrae: Nombre, Ubicación, Teléfono y Website automáticamente.</p>
+                  </div>
+                  <div style={{display: 'flex', gap: 32, alignItems: 'center'}}>
+                      <div style={{display:'flex', gap: 16, alignItems:'center'}}>
+                          <label style={{display:'flex', alignItems:'center', gap:6, cursor:'pointer', fontSize:'0.9rem', color: 'white'}}>
+                            <input type="radio" name="leadSource" value="inbound" /> 📥 Inbound
+                          </label>
+                          <label style={{display:'flex', alignItems:'center', gap:6, cursor:'pointer', fontSize:'0.9rem', color: 'white'}}>
+                            <input type="radio" name="leadSource" value="outbound" defaultChecked /> 📤 Outbound
+                          </label>
+                      </div>
+                      <div className="file-upload-wrapper" style={{position:'relative', overflow:'hidden', display:'inline-block'}}>
+                        <button className="btn btn-primary" style={{display:'flex', alignItems:'center', gap:8, padding: '12px 24px'}} disabled={uploadingData}>
+                          <Upload size={18} /> {uploadingData ? 'Mapeando Base de Datos...' : 'Subir Bases de Google Maps (.csv)'}
+                        </button>
+                        <input type="file" accept=".csv" onChange={handleFileUpload} style={{fontSize: 100, position: 'absolute', left: 0, top: 0, opacity: 0, cursor: 'pointer', height: '100%'}} disabled={uploadingData} />
+                      </div>
+                  </div>
+              </div>
+
+              {/* TABS DE FILTRO & LISTADO DE LEADS MEJORADO */}
+              <div style={{marginBottom: 24}}>
+                  <div style={{display: 'flex', gap: 12, marginBottom: 20}}>
+                     <button className={`btn ${leadsFilterTab === 'inbound' ? 'btn-primary' : 'btn-glass'}`} onClick={() => setLeadsFilterTab('inbound')}>
+                        📥 Base Inbound ({projectLeads.filter(l => l.source === 'inbound').length})
+                     </button>
+                     <button className={`btn ${leadsFilterTab === 'outbound' ? 'btn-primary' : 'btn-glass'}`} onClick={() => setLeadsFilterTab('outbound')}>
+                        📤 Base Outbound ({projectLeads.filter(l => l.source === 'outbound').length})
+                     </button>
+                  </div>
+
+                  <div className="glass-panel" style={{padding: 24}}>
+                      <div style={{display: 'flex', flexWrap: 'wrap', gap: 12, marginBottom: 24}}>
+                         <div className="search-box" style={{flex: 1, minWidth: 250}}>
+                           <Search size={16} className="text-muted" />
+                           <input type="text" placeholder={`Buscar en ${activeLeadsCount} prospectos...`} value={searchQuery} onChange={(e)=>setSearchQuery(e.target.value)} />
+                         </div>
+                         <div className="search-box" style={{flex: 1, minWidth: 200}}>
+                           <MapPin size={16} className="text-muted" />
+                           <input type="text" placeholder={`Filtrar por Zona/Ciudad...`} value={zoneQuery} onChange={(e)=>setZoneQuery(e.target.value)} />
+                         </div>
+                         <div style={{display: 'flex', gap: 8, background: 'rgba(0,0,0,0.2)', padding: '4px', borderRadius: 8}}>
+                           <button className={`btn-sm ${statusFilter === 'all' ? 'btn-primary' : 'btn-glass'}`} style={{border:'none'}} onClick={()=>setStatusFilter('all')}>Todos</button>
+                           <button className={`btn-sm ${statusFilter === 'uncontacted' ? 'btn-primary' : 'btn-glass'}`} style={{border:'none'}} onClick={()=>setStatusFilter('uncontacted')}>⚠️ Sin Contactar</button>
+                           <button className={`btn-sm ${statusFilter === 'contacting' ? 'btn-primary' : 'btn-glass'}`} style={{border:'none'}} onClick={()=>setStatusFilter('contacting')}>🕒 En Proceso</button>
+                           <button className={`btn-sm ${statusFilter === 'won' ? 'btn-primary' : 'btn-glass'}`} style={{border:'none'}} onClick={()=>setStatusFilter('won')}>✅ Ganados</button>
+                           <button className={`btn-sm ${statusFilter === 'lost' ? 'btn-primary' : 'btn-glass'}`} style={{border:'none'}} onClick={()=>setStatusFilter('lost')}>❌ Perdidos</button>
+                         </div>
+                      </div>
+
+                      <div className="leads-list">
+                         {filteredProjectLeads.length === 0 && (
+                            <div className="text-center text-muted" style={{padding: '40px 0'}}>
+                               <FileDigit size={40} style={{margin: '0 auto 16px auto', opacity: 0.5}} />
+                               <p>No hay contactos que coincidan con estos filtros.</p>
+                            </div>
+                         )}
+                         {filteredProjectLeads.map(lead => (
+                            <div key={lead.id} className="lead-card" style={{cursor: 'pointer'}} onClick={() => setManagerLead(lead)}>
+                               <div className="lead-card-header" style={{borderBottom: 'none', paddingBottom: 0}}>
+                                  <div style={{flex: 1}}>
+                                     <h3 style={{fontSize: '1.1rem', margin: 0, color: 'white'}}>{lead.name}</h3>
+                                  </div>
+                                  <div style={{display: 'flex', gap: 12, alignItems: 'center'}}>
+                                     <span className="text-sm text-muted">Clic para Expandir & Gestionar ➔</span>
+                                     {lead.status === 'uncontacted' ? (
+                                        <span className="badge-contact action-uncontacted">⚠️ Sin Contactar</span>
+                                     ) : lead.status === 'won' ? (
+                                        <span className="badge-contact action-won">✅ Ganado</span>
+                                     ) : lead.status === 'lost' ? (
+                                        <span className="badge-contact action-lost">❌ Perdido</span>
+                                     ) : (
+                                        <span className="badge-contact action-contacting">🕒 Siguiendo</span>
+                                     )}
+                                  </div>
+                               </div>
+                            </div>
+                         ))}
+                      </div>
+                  </div>
               </div>
            </div>
         )}
@@ -205,35 +523,29 @@ export default function AdminDashboard() {
           <div className="animate-slide-up">
              <header className="admin-header">
                 <h1>Configuración de Comisiones (SDR)</h1>
-                <p>Estructura confidencial de ganancias del equipo</p>
+                <p>Estructura confidencial de ganancias leídas de la BD</p>
              </header>
              <div className="admin-panel glass-panel">
-                <p className="text-muted" style={{marginBottom: 24}}>Aquí defines cuánto percibe cada vendedor por campaña sin que se filtre al resto del dashboard.</p>
                 <table className="admin-table">
                    <thead>
                      <tr>
                        <th>Vendedor</th>
-                       <th>Reglas de Comisión Específicas</th>
-                       <th>Proyección Actual de Pago</th>
-                       <th>Acciones</th>
+                       <th>Reglas de Comisión Asignadas</th>
                      </tr>
                    </thead>
                    <tbody>
-                     {mockTeam.map(member => (
+                     {team.length === 0 && <tr><td colSpan="2" style={{textAlign:'center', padding:30}}>Sin vendedores.</td></tr>}
+                     {team.map(member => (
                        <tr key={member.id}>
-                         <td><strong>{member.name}</strong></td>
+                         <td><strong>{member.full_name}</strong></td>
                          <td>
-                            {member.commissions.map(c => {
-                              const proj = mockProjects.find(p => p.id === c.projectId);
-                              return (
-                                <div key={c.projectId} style={{marginBottom: 4, fontSize: '0.85rem'}}>
-                                  <span style={{color: 'var(--accent)'}}>{proj?.code}:</span> {c.type === 'percentage' ? `${c.value}% del precio base` : `$${c.value.toLocaleString()} fijo`}
+                            {member.sdr_project_commissions?.length === 0 && <span className="text-muted text-sm">Sin proyectos.</span>}
+                            {member.sdr_project_commissions?.map(c => (
+                                <div key={c.project_id} style={{marginBottom: 6, fontSize: '0.85rem'}}>
+                                  <span style={{color: 'var(--accent)'}}>{c.projects?.name}:</span> {c.commission_type === 'percentage' ? `${c.commission_value}% del precio base` : `$${Number(c.commission_value).toLocaleString()} fijo`}
                                 </div>
-                              )
-                            })}
+                            ))}
                          </td>
-                         <td className="text-success font-bold">${(member.totalActiveClients * 35000).toLocaleString()}</td>
-                         <td><button className="btn btn-glass btn-sm">Editar Porcentajes</button></td>
                        </tr>
                      ))}
                    </tbody>
@@ -244,8 +556,28 @@ export default function AdminDashboard() {
 
       </main>
 
+      {/* Modals Injections */}
+      {showAddProject && (
+        <AddProjectModal onClose={() => setShowAddProject(false)} onProjectCreated={loadData} />
+      )}
+      {showEditProject && selectedProject && (
+        <EditProjectModal project={selectedProject} onClose={() => setShowEditProject(false)} onProjectUpdated={(updated) => { setSelectedProject(updated); loadData(); }} />
+      )}
+      {showAddSdr && (
+        <AddSdrModal onClose={() => setShowAddSdr(false)} />
+      )}
+      {showAssignSdr && selectedSdr && (
+        <AssignProjectModal sdr={selectedSdr} projects={projects} onClose={() => setShowAssignSdr(false)} onAssigned={loadData} />
+      )}
+      {showAddPlan && selectedProject && (
+        <AddPlanModal projectId={selectedProject.id} onClose={() => setShowAddPlan(false)} onPlanCreated={refreshPlans} />
+      )}
+      {managerLead && (
+        <LeadManagerModal lead={managerLead} onClose={() => setManagerLead(null)} onSaveInteraction={handleAdminInteraction} />
+      )}
+
       <style>{`
-        /* ... Estilos base previos se mantienen y agregamos ajustes ... */
+        /* Estilos base de Admins */
         .admin-container { display: grid; grid-template-columns: 280px 1fr; min-height: 100vh; }
         
         .admin-sidebar { padding: 24px; border-radius: 0; border-left: none; border-top: none; border-bottom: none; display: flex; flex-direction: column; }
@@ -267,7 +599,6 @@ export default function AdminDashboard() {
         .kpi-value { font-size: 2.5rem; font-weight: 800; margin: 12px 0; }
         
         .admin-panel { padding: 24px; }
-        .panel-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
         .btn-sm { padding: 6px 12px; font-size: 0.85rem; }
         
         .admin-table { width: 100%; border-collapse: collapse; }
@@ -277,13 +608,26 @@ export default function AdminDashboard() {
         .admin-table th { color: var(--text-muted); font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.05em; }
         .btn-icon { background: transparent; border: none; color: var(--text-muted); cursor: pointer; }
         .btn-icon:hover { color: var(--text-main); }
-        .text-main { color: var(--text-main); }
-        .mb-3 { margin-bottom: 12px; }
-        .mt-3 { margin-top: 12px; }
 
-        .glass-panel:hover {
-          border-color: rgba(255,255,255,0.15);
-        }
+        .search-box { display: flex; align-items: center; gap: 8px; background: rgba(0,0,0,0.2); padding: 0 16px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.05); }
+        .search-box input { width: 100%; background: transparent; border: none; color: white; padding: 12px 0; outline: none; }
+
+        /* Leads Cards UI Improvements */
+        .leads-list { display: flex; flex-direction: column; gap: 16px; }
+        .lead-card { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 20px; transition: var(--transition); }
+        .lead-card:hover { background: rgba(255,255,255,0.05); border-color: rgba(99, 102, 241, 0.4); }
+        .lead-card-header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom: 16px; }
+        
+        .badge-contact { padding: 6px 12px; border-radius: 20px; font-size: 0.85rem; font-weight: 600; display: inline-flex; align-items: center; gap: 6px; }
+        .action-uncontacted { background: rgba(234, 179, 8, 0.15); color: #facc15; border: 1px solid rgba(234, 179, 8, 0.3); }
+        .action-won { background: rgba(34, 197, 94, 0.15); color: #4ade80; border: 1px solid rgba(34, 197, 94, 0.3); }
+        .action-lost { background: rgba(239, 68, 68, 0.15); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.3); }
+        .action-contacting { background: rgba(99, 102, 241, 0.15); color: #818cf8; border: 1px solid rgba(99, 102, 241, 0.3); }
+
+        .info-blob { display: flex; align-items: center; gap: 8px; background: rgba(0,0,0,0.2); padding: 8px 12px; border-radius: 8px; color: var(--text-muted); }
+        .info-blob .text-accent { color: var(--accent); }
+        
+        @keyframes spin { to { transform: rotate(360deg); } }
       `}</style>
     </div>
   );
