@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Users, BarChart3, Settings, Database, Smartphone, Plus, Upload, ArrowLeft, Search, Filter, Trash2, Edit3, MapPin, Globe, Phone, FileDigit } from 'lucide-react';
+import { Users, BarChart3, Settings, Database, Smartphone, Plus, Upload, ArrowLeft, Search, Trash2, Edit3, MapPin, FileDigit, Menu, X } from 'lucide-react';
 import { fetchGlobalStats, fetchTeam, fetchProjects, fetchLeads, bulkCreateLeads, deleteProject, fetchProjectPlans } from '../lib/api';
 import { Link } from 'react-router-dom';
 import Papa from 'papaparse';
@@ -12,7 +12,8 @@ import AddPlanModal from '../components/AddPlanModal';
 import LeadManagerModal from '../components/LeadManagerModal';
 
 export default function AdminDashboard() {
-  const [activeView, setActiveView] = useState('metrics'); 
+  const [activeView, setActiveView] = useState('metrics');
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [selectedProject, setSelectedProject] = useState(null);
   const [selectedSdr, setSelectedSdr] = useState(null);
   
@@ -241,23 +242,68 @@ export default function AdminDashboard() {
 
   if (loading) return <div style={{display:'flex', height:'100vh', justifyContent:'center', alignItems:'center'}}><div className="spinner" style={{width: 40, height: 40, border: '3px solid rgba(255,255,255,0.1)', borderTopColor: '#6366f1', borderRadius: '50%', animation: 'spin 0.8s linear infinite'}}></div></div>;
 
+  const navItems = [
+    { view: 'metrics', icon: <BarChart3 size={20} />, label: 'Métricas' },
+    { view: 'team', icon: <Users size={20} />, label: 'Equipo' },
+    { view: 'projects', icon: <Database size={20} />, label: 'Proyectos' },
+    { view: 'config', icon: <Settings size={20} />, label: 'Config' },
+  ];
+
+  const handleNav = (view) => {
+    setActiveView(view);
+    setSidebarOpen(false);
+  };
+
   return (
     <div className="admin-container">
-      <aside className="admin-sidebar glass-panel">
+      {/* Mobile Top Bar */}
+      <div className="admin-topbar">
+        <h2 className="admin-logo">CreApp <span>SaaS</span></h2>
+        <button className="hamburger-btn" onClick={() => setSidebarOpen(!sidebarOpen)}>
+          {sidebarOpen ? <X size={24} /> : <Menu size={24} />}
+        </button>
+      </div>
+
+      {/* Sidebar Overlay (mobile) */}
+      {sidebarOpen && <div className="sidebar-overlay" onClick={() => setSidebarOpen(false)} />}
+
+      <aside className={`admin-sidebar glass-panel ${sidebarOpen ? 'sidebar-open' : ''}`}>
         <div className="logo-area">
           <h2>CreApp <span>SaaS</span></h2>
         </div>
         <nav className="admin-nav">
-          <button className={`nav-item ${(activeView === 'metrics') ? 'active' : ''}`} onClick={() => setActiveView('metrics')}><BarChart3 size={20} /> Métricas Generales</button>
-          <button className={`nav-item ${activeView === 'team' ? 'active' : ''}`} onClick={() => setActiveView('team')}><Users size={20} /> Equipo de Ventas</button>
-          <button className={`nav-item ${(activeView === 'projects' || activeView === 'project_details') ? 'active' : ''}`} onClick={() => setActiveView('projects')}><Database size={20} /> Proyectos (Tenants)</button>
-          <button className={`nav-item ${activeView === 'config' ? 'active' : ''}`} onClick={() => setActiveView('config')}><Settings size={20} /> Configuración SaaS</button>
-          
-          <Link to="/sales" className="nav-item" style={{ marginTop: 'auto', borderTop: '1px solid rgba(255,255,255,0.1)' }}>
+          {navItems.map(item => (
+            <button
+              key={item.view}
+              className={`nav-item ${(activeView === item.view || (item.view === 'projects' && activeView === 'project_details')) ? 'active' : ''}`}
+              onClick={() => handleNav(item.view)}
+            >
+              {item.icon} {item.label}
+            </button>
+          ))}
+          <Link to="/sales" className="nav-item" style={{ marginTop: 'auto', borderTop: '1px solid rgba(255,255,255,0.1)' }} onClick={() => setSidebarOpen(false)}>
             <Smartphone size={20} /> Ver App Vendedor
           </Link>
         </nav>
       </aside>
+
+      {/* Mobile Bottom Nav */}
+      <nav className="mobile-bottom-nav">
+        {navItems.map(item => (
+          <button
+            key={item.view}
+            className={`mobile-nav-item ${(activeView === item.view || (item.view === 'projects' && activeView === 'project_details')) ? 'active' : ''}`}
+            onClick={() => handleNav(item.view)}
+          >
+            {item.icon}
+            <span>{item.label}</span>
+          </button>
+        ))}
+        <Link to="/sales" className="mobile-nav-item">
+          <Smartphone size={20} />
+          <span>Vendedor</span>
+        </Link>
+      </nav>
 
       <main className="admin-content">
         
@@ -577,57 +623,133 @@ export default function AdminDashboard() {
       )}
 
       <style>{`
-        /* Estilos base de Admins */
-        .admin-container { display: grid; grid-template-columns: 280px 1fr; min-height: 100vh; }
-        
-        .admin-sidebar { padding: 24px; border-radius: 0; border-left: none; border-top: none; border-bottom: none; display: flex; flex-direction: column; }
+        /* ===== ADMIN LAYOUT - MOBILE FIRST ===== */
+        .admin-container {
+          display: flex;
+          flex-direction: column;
+          min-height: 100vh;
+          padding-bottom: 70px; /* space for mobile bottom nav */
+        }
+
+        /* --- Top Bar (mobile only) --- */
+        .admin-topbar {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: 14px 20px;
+          background: rgba(10,10,30,0.95);
+          border-bottom: 1px solid rgba(255,255,255,0.08);
+          position: sticky;
+          top: 0;
+          z-index: 100;
+        }
+        .admin-logo { font-size: 1.2rem; margin: 0; }
+        .admin-logo span { color: var(--accent); }
+        .hamburger-btn { background: transparent; border: none; color: white; cursor: pointer; padding: 4px; display: flex; align-items: center; }
+
+        /* --- Sidebar (hidden on mobile, drawer when open) --- */
+        .admin-sidebar {
+          position: fixed;
+          top: 0; left: 0; bottom: 0;
+          width: 280px;
+          z-index: 200;
+          padding: 24px;
+          border-radius: 0;
+          display: flex;
+          flex-direction: column;
+          transform: translateX(-100%);
+          transition: transform 0.3s ease;
+        }
+        .admin-sidebar.sidebar-open { transform: translateX(0); }
+        .sidebar-overlay {
+          position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 199;
+        }
         .logo-area h2 { font-size: 1.5rem; margin-bottom: 40px; }
         .logo-area span { color: var(--accent); }
         .admin-nav { display: flex; flex-direction: column; gap: 12px; flex: 1; }
-        
         .nav-item {
-          display: flex; align-items: center; gap: 12px; padding: 12px 16px; width: 100%; border: none; background: transparent; cursor: pointer; text-align: left;
-          color: var(--text-muted); text-decoration: none; border-radius: 8px; transition: var(--transition); font-family: var(--font-family); font-size: 0.95rem; font-weight: 500;
+          display: flex; align-items: center; gap: 12px; padding: 12px 16px; width: 100%; border: none;
+          background: transparent; cursor: pointer; text-align: left; color: var(--text-muted);
+          text-decoration: none; border-radius: 8px; transition: var(--transition);
+          font-family: var(--font-family); font-size: 0.95rem; font-weight: 500;
         }
         .nav-item:hover, .nav-item.active { background: var(--accent-light); color: var(--text-main); }
-        
-        .admin-content { padding: 40px; overflow-y: auto; height: 100vh; }
-        .admin-header { margin-bottom: 40px; }
-        
-        .dashboard-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; }
-        .kpi-card { padding: 24px; }
-        .kpi-value { font-size: 2.5rem; font-weight: 800; margin: 12px 0; }
-        
-        .admin-panel { padding: 24px; }
-        .btn-sm { padding: 6px 12px; font-size: 0.85rem; }
-        
-        .admin-table { width: 100%; border-collapse: collapse; }
-        .admin-table th, .admin-table td {
-          padding: 16px; text-align: left; border-bottom: 1px solid var(--glass-border); color: var(--text-main);
+
+        /* --- Mobile Bottom Nav --- */
+        .mobile-bottom-nav {
+          display: flex;
+          position: fixed;
+          bottom: 0; left: 0; right: 0;
+          z-index: 100;
+          background: rgba(10,10,30,0.97);
+          border-top: 1px solid rgba(255,255,255,0.1);
+          padding: 8px 0 calc(8px + env(safe-area-inset-bottom));
         }
-        .admin-table th { color: var(--text-muted); font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.05em; }
+        .mobile-nav-item {
+          flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px;
+          background: transparent; border: none; color: var(--text-muted);
+          font-size: 0.65rem; font-family: var(--font-family); cursor: pointer;
+          text-decoration: none; padding: 4px 0; transition: var(--transition);
+        }
+        .mobile-nav-item.active, .mobile-nav-item:hover { color: var(--accent); }
+
+        /* --- Main Content --- */
+        .admin-content { padding: 20px 16px; overflow-y: auto; }
+        .admin-header { margin-bottom: 24px; }
+        .admin-header h1 { font-size: 1.4rem; }
+
+        /* --- Grids --- */
+        .dashboard-grid { display: grid; grid-template-columns: 1fr; gap: 16px; }
+        .kpi-card { padding: 20px; }
+        .kpi-value { font-size: 2rem; font-weight: 800; margin: 8px 0; }
+
+        /* --- Tables (scrollable on mobile) --- */
+        .admin-panel { padding: 16px; overflow-x: auto; }
+        .admin-table { width: 100%; border-collapse: collapse; min-width: 500px; }
+        .admin-table th, .admin-table td {
+          padding: 12px 10px; text-align: left; border-bottom: 1px solid var(--glass-border); color: var(--text-main);
+        }
+        .admin-table th { color: var(--text-muted); font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; }
+
+        /* --- Misc --- */
+        .btn-sm { padding: 6px 12px; font-size: 0.85rem; }
         .btn-icon { background: transparent; border: none; color: var(--text-muted); cursor: pointer; }
         .btn-icon:hover { color: var(--text-main); }
-
-        .search-box { display: flex; align-items: center; gap: 8px; background: rgba(0,0,0,0.2); padding: 0 16px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.05); }
-        .search-box input { width: 100%; background: transparent; border: none; color: white; padding: 12px 0; outline: none; }
-
-        /* Leads Cards UI Improvements */
-        .leads-list { display: flex; flex-direction: column; gap: 16px; }
-        .lead-card { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 20px; transition: var(--transition); }
+        .search-box { display: flex; align-items: center; gap: 8px; background: rgba(0,0,0,0.2); padding: 0 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.05); }
+        .search-box input { width: 100%; background: transparent; border: none; color: white; padding: 10px 0; outline: none; }
+        .leads-list { display: flex; flex-direction: column; gap: 12px; }
+        .lead-card { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 16px; transition: var(--transition); }
         .lead-card:hover { background: rgba(255,255,255,0.05); border-color: rgba(99, 102, 241, 0.4); }
-        .lead-card-header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom: 16px; }
-        
-        .badge-contact { padding: 6px 12px; border-radius: 20px; font-size: 0.85rem; font-weight: 600; display: inline-flex; align-items: center; gap: 6px; }
-        .action-uncontacted { background: rgba(234, 179, 8, 0.15); color: #facc15; border: 1px solid rgba(234, 179, 8, 0.3); }
-        .action-won { background: rgba(34, 197, 94, 0.15); color: #4ade80; border: 1px solid rgba(34, 197, 94, 0.3); }
-        .action-lost { background: rgba(239, 68, 68, 0.15); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.3); }
-        .action-contacting { background: rgba(99, 102, 241, 0.15); color: #818cf8; border: 1px solid rgba(99, 102, 241, 0.3); }
-
+        .lead-card-header { display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 8px; }
+        .badge-contact { padding: 4px 10px; border-radius: 20px; font-size: 0.8rem; font-weight: 600; display: inline-flex; align-items: center; gap: 4px; }
+        .action-uncontacted { background: rgba(234,179,8,0.15); color: #facc15; border: 1px solid rgba(234,179,8,0.3); }
+        .action-won { background: rgba(34,197,94,0.15); color: #4ade80; border: 1px solid rgba(34,197,94,0.3); }
+        .action-lost { background: rgba(239,68,68,0.15); color: #f87171; border: 1px solid rgba(239,68,68,0.3); }
+        .action-contacting { background: rgba(99,102,241,0.15); color: #818cf8; border: 1px solid rgba(99,102,241,0.3); }
         .info-blob { display: flex; align-items: center; gap: 8px; background: rgba(0,0,0,0.2); padding: 8px 12px; border-radius: 8px; color: var(--text-muted); }
-        .info-blob .text-accent { color: var(--accent); }
-        
         @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* ===== DESKTOP OVERRIDES ===== */
+        @media (min-width: 768px) {
+          .admin-topbar { display: none; }
+          .mobile-bottom-nav { display: none; }
+          .admin-container {
+            display: grid;
+            grid-template-columns: 280px 1fr;
+            padding-bottom: 0;
+          }
+          .admin-sidebar {
+            position: sticky;
+            top: 0;
+            height: 100vh;
+            transform: none !important;
+          }
+          .admin-content { padding: 40px; height: 100vh; }
+          .admin-header { margin-bottom: 40px; }
+          .admin-header h1 { font-size: 1.8rem; }
+          .dashboard-grid { grid-template-columns: repeat(3, 1fr); gap: 24px; }
+          .kpi-value { font-size: 2.5rem; }
+        }
       `}</style>
     </div>
   );
