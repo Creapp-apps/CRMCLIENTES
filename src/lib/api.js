@@ -67,32 +67,65 @@ export async function fetchProjectPlans(projectId) {
 // ==================== LEADS ====================
 
 export async function fetchLeads(projectId = null) {
-  let query = supabase
-    .from('leads')
-    .select('*, projects(name, code)')
-    .order('next_contact_date', { ascending: true });
+  let allData = [];
+  let from = 0;
+  const step = 1000;
 
-  if (projectId) query = query.eq('project_id', projectId);
-  
-  const { data, error } = await query;
-  if (error) throw error;
-  return data;
+  while (true) {
+    let query = supabase
+      .from('leads')
+      .select('*, projects(name, code)')
+      .order('next_contact_date', { ascending: true, nullsFirst: false })
+      .order('id', { ascending: true })
+      .range(from, from + step - 1);
+
+    if (projectId) query = query.eq('project_id', projectId);
+    
+    const { data, error } = await query;
+    if (error) throw error;
+    
+    if (data && data.length > 0) {
+      allData = allData.concat(data);
+      if (data.length < step) break;
+      from += step;
+    } else {
+      break;
+    }
+  }
+  return allData;
 }
 
 export async function fetchUrgentLeads() {
   const today = new Date();
   today.setHours(23, 59, 59, 999);
 
-  const { data, error } = await supabase
-    .from('leads')
-    .select('*, projects(name, code)')
-    .lte('next_contact_date', today.toISOString())
-    .neq('status', 'won')
-    .neq('status', 'lost')
-    .order('next_contact_date', { ascending: true });
+  let allData = [];
+  let from = 0;
+  const step = 1000;
 
-  if (error) throw error;
-  return data;
+  while (true) {
+    const { data, error } = await supabase
+      .from('leads')
+      .select('*, projects(name, code)')
+      .lte('next_contact_date', today.toISOString())
+      .neq('status', 'won')
+      .neq('status', 'lost')
+      .order('next_contact_date', { ascending: true, nullsFirst: false })
+      .order('id', { ascending: true })
+      .range(from, from + step - 1);
+
+    if (error) throw error;
+
+    if (data && data.length > 0) {
+      allData = allData.concat(data);
+      if (data.length < step) break;
+      from += step;
+    } else {
+      break;
+    }
+  }
+
+  return allData;
 }
 
 export async function createLead({ project_id, name, company, source, channel }) {

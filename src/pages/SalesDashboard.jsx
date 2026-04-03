@@ -4,6 +4,7 @@ import { fetchLeads, fetchUrgentLeads, fetchProjects, createInteraction, updateL
 import { useAuth } from '../context/AuthContext';
 import LeadManagerModal from '../components/LeadManagerModal';
 import AddLeadModal from '../components/AddLeadModal';
+import InteractiveMap from '../components/InteractiveMap';
 import { Link } from 'react-router-dom';
 
 export default function SalesDashboard() {
@@ -14,6 +15,7 @@ export default function SalesDashboard() {
   const [expandedProject, setExpandedProject] = useState(null);
   const [projectSubTab, setProjectSubTab] = useState('outbound');
   const [projectStatusFilter, setProjectStatusFilter] = useState('uncontacted');
+  const [mapProjectFilter, setMapProjectFilter] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [isToContactExpanded, setIsToContactExpanded] = useState(true);
   const [isStrategyModalOpen, setIsStrategyModalOpen] = useState(false);
@@ -276,7 +278,7 @@ export default function SalesDashboard() {
                            <div style={{marginTop: 8}}>
                              {projLeads.filter(l => l.source === projectSubTab)
                                .filter(l => projectStatusFilter === 'all' || l.status === projectStatusFilter)
-                               .filter(l => l.name.toLowerCase().includes(searchQuery.toLowerCase()) || (l.company || '').toLowerCase().includes(searchQuery.toLowerCase()))
+                               .filter(l => l.name.toLowerCase().includes(searchQuery.toLowerCase()) || (l.company || '').toLowerCase().includes(searchQuery.toLowerCase()) || (l.location || '').toLowerCase().includes(searchQuery.toLowerCase()))
                                .slice(0, 50) /* Mostrar max 50 para rendimiento en movil */
                                .map((lead, idx) => (
                                <LeadCard key={lead.id} lead={lead} idx={idx} onAction={setSelectedLead} onDelete={handleDeleteLead} />
@@ -337,75 +339,92 @@ export default function SalesDashboard() {
          </div>
       )}
 
-      {/* TAB RECORRIDO (RUTAS MAPPING) */}
-      {activeTab === 'routing' && (
+      {/* TAB RECORRIDO (RUTAS MAPPING) - REMOVED, MERGED INTO MAP */}
+
+      {/* TAB MAPA + RUTA (UNIFIED) */}
+      {activeTab === 'map' && (
          <div className="animate-slide-up">
-            <header className="page-header">
-              <h2>Recorrido Presencial</h2>
-              <p className="text-muted text-sm">Armá tu itinerario para visitar</p>
+            <header className="page-header" style={{ marginBottom: 12 }}>
+              <h2>Mapa Interactivo</h2>
+              <p className="text-muted text-sm">Explorá y armá tu ruta tocando los pines</p>
             </header>
+            
+            <div style={{ display: 'flex', gap: 8, overflowX: 'auto', padding: '0 8px 12px 8px', whiteSpace: 'nowrap' }} className="hide-scrollbar">
+              <button 
+                className={`btn-sm ${mapProjectFilter === 'all' ? 'btn-primary' : 'btn-glass'}`} 
+                style={{ border: 'none', padding: '8px 16px', borderRadius: 20, fontSize: '0.85rem' }} 
+                onClick={() => setMapProjectFilter('all')}
+              >
+                Todos
+              </button>
+              {projects.map(proj => (
+                <button 
+                  key={proj.id}
+                  className={`btn-sm ${mapProjectFilter === proj.id ? 'btn-primary' : 'btn-glass'}`} 
+                  style={{ border: 'none', padding: '8px 16px', borderRadius: 20, fontSize: '0.85rem' }} 
+                  onClick={() => setMapProjectFilter(proj.id)}
+                >
+                  {proj.name}
+                </button>
+              ))}
+            </div>
 
-            <main className="leads-list">
-               {/* Zona Builder */}
-               <div className="glass-panel" style={{marginBottom: 16, padding: 16}}>
-                  <h3 style={{fontSize: '1.1rem', marginBottom: 12}}>Armar Ruta</h3>
-                  <div className="search-box" style={{marginBottom: 16}}>
-                    <MapPin size={16} className="text-muted" />
-                    <input type="text" placeholder="Filtrar por Zona (Ej: Palermo)..." value={routeZoneFilter} onChange={(e)=>setRouteZoneFilter(e.target.value)} />
-                  </div>
+            {/* Contador */}
+            <div style={{ padding: '0 16px 8px 16px' }}>
+               <p className="text-sm font-bold" style={{ color: 'var(--accent)' }}>
+                 📍 {mapProjectFilter === 'all' ? allLeads.length : allLeads.filter(l => l.project_id === mapProjectFilter).length} prospectos
+               </p>
+            </div>
 
-                  {routeZoneFilter.length > 2 && (
-                    <div style={{maxHeight: 250, overflowY: 'auto', background: 'rgba(0,0,0,0.1)', padding: 8, borderRadius: 8}} className="hide-scrollbar">
-                      {allLeads.filter(l => l.location && l.location.toLowerCase().includes(routeZoneFilter.toLowerCase()) && !routeLeads.find(rl => rl.id === l.id)).map(lead => (
-                        <div key={lead.id} style={{display:'flex', justifyContent:'space-between', alignItems:'center', padding: '12px', borderBottom: '1px solid rgba(255,255,255,0.05)'}}>
-                           <div>
-                             <p className="text-sm" style={{color:'white', margin:0, fontWeight:600}}>{lead.name}</p>
-                             <p className="text-xs text-muted" style={{margin:0}}>{lead.location}</p>
+            {/* Mapa */}
+            <div className="glass-panel" style={{ padding: 8, marginBottom: 16 }}>
+               <InteractiveMap 
+                 leads={mapProjectFilter === 'all' ? allLeads : allLeads.filter(l => l.project_id === mapProjectFilter)} 
+                 onSelectLead={setSelectedLead} 
+                 onToggleRoute={(lead) => {
+                   if (routeLeads.find(rl => rl.id === lead.id)) {
+                     setRouteLeads(routeLeads.filter(rl => rl.id !== lead.id));
+                   } else {
+                     setRouteLeads([...routeLeads, lead]);
+                   }
+                 }}
+                 routeLeadIds={routeLeads.map(rl => rl.id)}
+               />
+            </div>
+
+            {/* Itinerario Panel */}
+            <div className="glass-panel" style={{ padding: 16 }}>
+               <h3 style={{ fontSize: '1.1rem', marginBottom: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                 <span>🚩 Mi Itinerario</span>
+                 <span className="text-accent" style={{ fontSize: '0.9rem' }}>{routeLeads.length} paradas</span>
+               </h3>
+               
+               {routeLeads.length === 0 ? (
+                 <div className="text-center text-muted" style={{ padding: '20px 0' }}>
+                    <Navigation size={28} style={{ margin: '0 auto 10px auto', opacity: 0.3 }} />
+                    <p className="text-sm">Tocá un pin en el mapa y pulsá "+ Añadir a Ruta" para armar tu itinerario.</p>
+                 </div>
+               ) : (
+                 <>
+                   <div style={{ marginBottom: 16 }}>
+                     {routeLeads.map((lead, idx) => (
+                        <div key={lead.id} style={{ display: 'flex', gap: 12, marginBottom: 12, alignItems: 'center' }}>
+                           <div style={{ width: 24, height: 24, borderRadius: '50%', background: 'var(--accent)', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.75rem', fontWeight: 'bold', flexShrink: 0 }}>{idx + 1}</div>
+                           <div style={{ flex: 1, minWidth: 0 }}>
+                              <p style={{ margin: 0, fontWeight: 600, color: 'white', fontSize: '0.9rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{lead.name}</p>
+                              <p className="text-xs text-muted" style={{ margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{lead.location || 'Sin ubicación'}</p>
                            </div>
-                           <button className="btn-sm btn-primary" style={{border:'none', borderRadius:20, padding:'4px 12px'}} onClick={() => setRouteLeads([...routeLeads, lead])}>+ Añadir</button>
+                           <button className="btn-icon" style={{ color: 'var(--danger)', flexShrink: 0 }} onClick={() => setRouteLeads(routeLeads.filter(l => l.id !== lead.id))}>✖</button>
                         </div>
-                      ))}
-                      {allLeads.filter(l => l.location && l.location.toLowerCase().includes(routeZoneFilter.toLowerCase())).length === 0 && (
-                        <p className="text-muted text-xs text-center" style={{padding: '12px 0'}}>No hay leads en esta zona.</p>
-                      )}
-                    </div>
-                  )}
-               </div>
-
-               {/* Ruta Actual */}
-               <div className="glass-panel" style={{padding: 16}}>
-                  <h3 style={{fontSize: '1.1rem', marginBottom: 12, display:'flex', justifyContent:'space-between'}}>
-                    <span>Mi Itinerario</span>
-                    <span className="text-accent">{routeLeads.length} paradas</span>
-                  </h3>
-                  
-                  {routeLeads.length === 0 ? (
-                    <div className="text-center text-muted" style={{padding: '24px 0'}}>
-                       <Navigation size={32} style={{margin: '0 auto 12px auto', opacity: 0.3}} />
-                       <p className="text-sm">Buscá una zona arriba y añadí locales a tu ruta.</p>
-                    </div>
-                  ) : (
-                    <>
-                      <div className="timeline" style={{marginBottom: 20}}>
-                        {routeLeads.map((lead, idx) => (
-                           <div key={lead.id} style={{display: 'flex', gap: 12, marginBottom: 16}}>
-                              <div style={{width: 24, height: 24, borderRadius: '50%', background: 'var(--accent)', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.75rem', fontWeight: 'bold'}}>{idx + 1}</div>
-                              <div style={{flex: 1}}>
-                                 <p style={{margin: 0, fontWeight: 600, color: 'white'}} onClick={() => setSelectedLead(lead)}>{lead.name}</p>
-                                 <p className="text-xs text-muted" style={{margin: 0}}>{lead.location}</p>
-                              </div>
-                              <button className="btn-icon" style={{color: 'var(--danger)'}} onClick={() => setRouteLeads(routeLeads.filter(l => l.id !== lead.id))}>✖</button>
-                           </div>
-                        ))}
-                      </div>
-                      
-                      <button className="btn btn-success" style={{width: '100%', padding: 14}} onClick={generateGoogleMapsRoute}>
-                         <Map size={18} /> INICIAR NAVEGACIÓN
-                      </button>
-                    </>
-                  )}
-               </div>
-            </main>
+                     ))}
+                   </div>
+                   
+                   <button className="btn btn-success" style={{ width: '100%', padding: 14 }} onClick={generateGoogleMapsRoute}>
+                      <Map size={18} /> INICIAR NAVEGACIÓN
+                   </button>
+                 </>
+               )}
+            </div>
          </div>
       )}
 
@@ -417,7 +436,7 @@ export default function SalesDashboard() {
         <div className={`b-nav-item ${activeTab === 'home' ? 'active' : ''}`} onClick={() => setActiveTab('home')}><Home size={20} /><span>Inicio</span></div>
         <div className={`b-nav-item ${activeTab === 'projects' ? 'active' : ''}`} onClick={() => setActiveTab('projects')}><List size={20} /><span>Proyectos</span></div>
         <div className={`b-nav-item ${activeTab === 'to_contact' ? 'active' : ''}`} onClick={() => setActiveTab('to_contact')}><Bell size={20} /><span>Contactar</span></div>
-        <div className={`b-nav-item ${activeTab === 'routing' ? 'active' : ''}`} onClick={() => setActiveTab('routing')}><Map size={20} /><span>Ruta</span></div>
+        <div className={`b-nav-item ${activeTab === 'map' ? 'active' : ''}`} onClick={() => setActiveTab('map')}><MapPin size={20} /><span>Mapa</span></div>
         {isAdmin && <Link to="/admin" className="b-nav-item"><UserCog size={20} /><span>Admin</span></Link>}
       </nav>
 

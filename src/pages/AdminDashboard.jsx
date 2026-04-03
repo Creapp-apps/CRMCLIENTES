@@ -208,7 +208,8 @@ export default function AdminDashboard() {
       const matchName = l.name && l.name.toLowerCase().includes(sq);
       const matchCompany = l.company && l.company.toLowerCase().includes(sq);
       const matchPhone = l.phone && l.phone.toLowerCase().includes(sq);
-      return matchName || matchCompany || matchPhone;
+      const matchLocation = l.location && l.location.toLowerCase().includes(sq);
+      return matchName || matchCompany || matchPhone || matchLocation;
     }
     return true;
   });
